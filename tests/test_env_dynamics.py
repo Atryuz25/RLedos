@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from rl_edos.env.cloud_env import CloudEnv
 
 
@@ -112,6 +113,31 @@ def test_reset_seed_reproduces_identical_episode(make_config):
 
     for a, b in zip(trace_a, trace_b):
         np.testing.assert_array_equal(a, b)
+
+
+def test_zero_capacity_latency_uses_flat_per_request_fallback(make_config):
+    cfg = make_config(
+        {
+            "sim": {
+                "min_instances": 0,
+                "max_instances": 1,
+                "control_interval_s": 10.0,
+                "base_latency_ms": 5.0,
+            },
+            "traffic": {"legit_pattern": "poisson", "base_rate": 2.0, "noise_std": 0.0},
+        }
+    )
+    env = CloudEnv(cfg)
+    env.reset(seed=1)
+
+    obs, *_ = env.step(np.array([0.0], dtype=np.float32))  # stay at 0 active instances
+    active_instances, queue_len, latency_ms = obs[3], obs[2], obs[5]
+
+    assert active_instances == 0
+    assert queue_len > 0  # arrivals with zero capacity fully backlog
+    # docs/ASSUMPTIONS.md "Zero-capacity latency fallback": flat 1000ms/request, not
+    # the normal (queue_len / capacity_rps) formula which would divide by zero.
+    assert latency_ms == pytest.approx(cfg.sim.base_latency_ms + queue_len * 1000.0)
 
 
 def test_sim_horizon_truncates_episode(make_config):

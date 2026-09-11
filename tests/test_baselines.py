@@ -5,8 +5,9 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from rl_edos.baselines.randomisation import RandomisationController
-from rl_edos.baselines.security_blind_rl import train_security_blind
+from rl_edos.baselines.security_blind_rl import BLIND_OBS_DIM, train_security_blind
 from rl_edos.baselines.target_tracking import TargetTrackingController
+from rl_edos.env.cloud_env import OBS_DIM
 from rl_edos.env.state import EnvState
 
 
@@ -62,3 +63,10 @@ def test_security_blind_controller_returns_valid_bounded_action(make_config):
     action = controller(_state())
     assert action.shape == (1,)
     assert cfg.sim.min_instances <= action[0] <= cfg.sim.max_instances
+
+
+def test_blind_obs_dim_tracks_full_obs_dim():
+    # BLIND_OBS_DIM must stay derived from OBS_DIM (drops exactly detection_score,
+    # the last field of EnvState.to_obs()) so it can't silently drift if the
+    # observation vector grows.
+    assert BLIND_OBS_DIM == OBS_DIM - 1

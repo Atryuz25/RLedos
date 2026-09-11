@@ -216,5 +216,10 @@ class CloudEnv(gym.Env):
         if capacity_rps is None:
             capacity_rps = active_instances * self.sim.capacity_rps_per_instance
         if capacity_rps <= 0:
+            # No serving capacity at all (reachable when min_instances=0 and the
+            # fleet is scaled to zero): the normal capacity-denominated formula
+            # divides by zero, so fall back to a flat worst-case 1000ms/request
+            # penalty rather than a queueing-theory derivation. See
+            # docs/ASSUMPTIONS.md "Zero-capacity latency fallback".
             return self.sim.base_latency_ms + queue_len * 1000.0
         return self.sim.base_latency_ms + (queue_len / capacity_rps) * 1000.0

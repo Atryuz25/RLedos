@@ -54,6 +54,16 @@ legit and attack traffic by each stream's share of *that interval's new arrivals
 backlog composition isn't tracked. This is a fair-sharing approximation, not literal per-request
 attribution.
 
+## Zero-capacity latency fallback
+
+`min_instances` may be configured as 0, so `CloudEnv` can reach a state with zero active
+instances and zero serving capacity. The normal latency formula (`base_latency_ms +
+(queue_len / capacity_rps) * 1000`) divides by zero there, so `_latency_ms` falls back to
+`base_latency_ms + queue_len * 1000.0` — a flat, deliberate worst-case penalty of 1 second per
+queued request, not a queueing-theory derivation or a cited provider value. It exists only to
+keep the simulation well-defined at the zero-capacity edge case; it is not expected to be a
+tuning knob.
+
 ## Sim-to-real gap
 
 This testbed is a simplified discrete-interval simulation of a single-region, single-instance-type

@@ -45,3 +45,16 @@ def test_min_greater_than_max_fails_fast(tmp_path, make_config):
 def test_negative_control_interval_fails_fast(make_config):
     with pytest.raises(Exception):  # pydantic.ValidationError
         make_config({"sim": {"control_interval_s": -1.0}})
+
+
+def test_unknown_reward_weight_key_fails_fast(make_config):
+    # a typo'd key (e.g. "cost_weight") must not silently fall back to defaults
+    with pytest.raises(Exception, match="unknown reward_weights key"):
+        make_config({"agent": {"reward_weights": {"cost_weight": 1.0}}})
+
+
+def test_baselines_target_utilization_defaults_and_overrides(make_config):
+    assert make_config().baselines.target_utilization == 0.7
+    assert (
+        make_config({"baselines": {"target_utilization": 0.5}}).baselines.target_utilization == 0.5
+    )

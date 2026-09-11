@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import numpy as np
 import yaml
 
 from rl_edos.baselines import TargetTrackingController, train_security_blind
@@ -15,6 +16,7 @@ from rl_edos.evaluation.artifacts import write_attack_trace, write_run_artifacts
 from rl_edos.evaluation.evaluator import Controller, Evaluator
 from rl_edos.evaluation.metrics import MetricsSummary, RunRecord
 from rl_edos.evaluation.plotting import plot_comparison, plot_curves
+from rl_edos.training.sb3_utils import rescale_action
 
 RESULTS_DIR = Path("results")
 
@@ -41,7 +43,9 @@ def _build_controllers(
     controllers: dict[str, Controller] = {}
     for name in names:
         if name == "target_tracking":
-            controllers[name] = TargetTrackingController(config.sim)
+            controllers[name] = TargetTrackingController(
+                config.sim, target_utilization=config.baselines.target_utilization
+            )
         elif name == "security_blind_rl":
             print("training security_blind_rl baseline...")
             controllers[name] = train_security_blind(config)
@@ -57,7 +61,9 @@ def _build_controllers(
 
         def _rl_defender(state, _model=model):
             action, _ = _model.predict(state.to_obs(), deterministic=True)
-            return action
+            real_action = rescale_action(action, config.sim.min_instances, config.sim.max_instances)
+            clipped = np.clip(real_action, config.sim.min_instances, config.sim.max_instances)
+            return np.asarray(clipped, dtype=np.float32)
 
         controllers["rl_defender"] = _rl_defender
 

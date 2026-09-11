@@ -12,13 +12,13 @@ from gymnasium import spaces
 from stable_baselines3 import PPO
 
 from rl_edos.config import ExperimentConfig, SimConfig
-from rl_edos.env.cloud_env import CloudEnv
+from rl_edos.env.cloud_env import OBS_DIM, CloudEnv
 from rl_edos.env.state import EnvState
-from rl_edos.training.sb3_utils import train_ppo
+from rl_edos.training.sb3_utils import rescale_action, train_ppo
 
-# EnvState.to_obs() order ends with detection_score; masking it out is what
-# makes this controller "security-blind".
-BLIND_OBS_DIM = 7
+# EnvState.to_obs() order ends with detection_score; masking it out (dropping the
+# last dimension) is what makes this controller "security-blind".
+BLIND_OBS_DIM = OBS_DIM - 1
 
 
 class _BlindObsWrapper(gym.ObservationWrapper):
@@ -37,9 +37,12 @@ class _BlindObsWrapper(gym.ObservationWrapper):
 class SecurityBlindController:
     """Wraps a PPO model trained without detection awareness; same action contract as baselines.
 
-    SB3's continuous PPO policy is an unbounded Gaussian, so raw predictions
-    aren't guaranteed to land inside the action space; clip here so this
-    controller honours the same bounded-action contract every baseline does.
+    `train_ppo` trains against a [-1, 1]-rescaled action space (see
+    `training/sb3_utils.py`), so predictions must be mapped back to real
+    instance counts with `rescale_action` before use. SB3's continuous PPO
+    policy is also an unbounded Gaussian, so raw predictions aren't guaranteed
+    to land inside [-1, 1] either; clip after rescaling so this controller
+    honours the same bounded-action contract every baseline does.
     """
 
     def __init__(self, model: PPO, sim: SimConfig) -> None:
@@ -49,7 +52,8 @@ class SecurityBlindController:
     def __call__(self, state: EnvState) -> np.ndarray:
         obs = state.to_obs()[:BLIND_OBS_DIM]
         action, _ = self.model.predict(obs, deterministic=True)
-        clipped = np.clip(action, self.sim.min_instances, self.sim.max_instances)
+        real_action = rescale_action(action, self.sim.min_instances, self.sim.max_instances)
+        clipped = np.clip(real_action, self.sim.min_instances, self.sim.max_instances)
         return np.asarray(clipped, dtype=np.float32)
 
 

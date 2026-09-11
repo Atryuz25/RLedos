@@ -12,11 +12,17 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 class ConfigError(Exception):
     """Raised when an experiment config fails validation. Fails fast with a clear message."""
+
+
+# The only reward_weights keys any reward function reads (agents/reward.py, defender today;
+# cost_gain_w/evasion_w reserved for the Phase 4 attacker reward). An unrecognised key is almost
+# always a typo, and silently falling back to defaults would corrupt a training run with no error.
+KNOWN_REWARD_WEIGHT_KEYS = {"cost_w", "latency_w", "cost_gain_w", "evasion_w"}
 
 
 class SimConfig(BaseModel):
@@ -134,8 +140,30 @@ class AgentConfig(BaseModel):
         description="{cost_w, latency_w} for defender; + {cost_gain_w, evasion_w} for attacker",
     )
     total_timesteps: int = Field(default=10_000, gt=0, description="SB3 training budget")
+
+    @field_validator("reward_weights")
+    @classmethod
+    def _known_reward_weight_keys(cls, v: dict[str, float]) -> dict[str, float]:
+        unknown = set(v) - KNOWN_REWARD_WEIGHT_KEYS
+        if unknown:
+            raise ValueError(
+                f"unknown reward_weights key(s) {sorted(unknown)}; "
+                f"expected a subset of {sorted(KNOWN_REWARD_WEIGHT_KEYS)}"
+            )
+        return v
+
     policy_net: list[int] = Field(
         default_factory=lambda: [64, 64], description="hidden-layer sizes"
+    )
+
+
+class BaselineConfig(BaseModel):
+    """Reference-controller parameters (not PPO agents, hence kept out of AgentConfig)."""
+
+    target_utilization: float = Field(
+        default=0.7,
+        gt=0,
+        description="target_tracking's utilisation setpoint (AWS ASG target-tracking style)",
     )
 
 
@@ -148,6 +176,7 @@ class ExperimentConfig(BaseModel):
     attack: AttackSpec = Field(default_factory=AttackSpec)
     detection: DetectionConfig
     agent: AgentConfig = Field(default_factory=AgentConfig)
+    baselines: BaselineConfig = Field(default_factory=BaselineConfig)
 
 
 def load_config(path: str | Path) -> ExperimentConfig:
