@@ -140,6 +140,28 @@ def test_zero_capacity_latency_uses_flat_per_request_fallback(make_config):
     assert latency_ms == pytest.approx(cfg.sim.base_latency_ms + queue_len * 1000.0)
 
 
+def test_attack_rate_override_replaces_attack_traffic_fn(make_config):
+    # Phase 4's self-play envs inject a per-step learned attack rate instead of
+    # sampling attack_traffic_fn(t); the override must fully replace it, not add to it.
+    cfg = make_config(
+        {
+            "sim": {"min_instances": 1, "max_instances": 1, "control_interval_s": 10.0},
+            "traffic": {"legit_pattern": "poisson", "base_rate": 0.001, "noise_std": 0.0},
+        }
+    )
+    always_high = lambda t: 1000.0  # noqa: E731
+    env = CloudEnv(cfg, attack_traffic_fn=always_high)
+    env.reset(seed=1)
+
+    _, _, _, _, info_with_scripted = env.step(np.array([1.0], dtype=np.float32))
+    assert info_with_scripted["attack_rate"] == 1000.0
+
+    _, _, _, _, info_with_override = env.step(
+        np.array([1.0], dtype=np.float32), attack_rate_override=3.0
+    )
+    assert info_with_override["attack_rate"] == 3.0
+
+
 def test_sim_horizon_truncates_episode(make_config):
     cfg = make_config({"sim": {"sim_horizon_steps": 3}})
     env = CloudEnv(cfg)

@@ -1,0 +1,57 @@
+# Self-play demo config (Phase 4). Same economics/topology as default.yaml, but
+# attack.mode = learned with a positive evasion_budget so the attacker has an
+# action range to train within, and smaller training budgets so `rl-edos
+# selfplay` finishes in a practical demo timeframe on CPU.
+sim:
+  control_interval_s: 30.0
+  sim_horizon_steps: 120
+  instance_warmup_s: 60.0
+  scale_cooldown_s: 300.0
+  max_instances: 20
+  min_instances: 1
+  seed: 42
+  capacity_rps_per_instance: 50.0
+  base_latency_ms: 20.0
+  max_queue_len: 1000.0
+
+billing:
+  price_per_instance_second: 0.00001156
+  billing_granularity: per_second
+  min_service_charge: 0.0006936
+
+traffic:
+  legit_pattern: diurnal
+  base_rate: 100.0
+  diurnal_amplitude: 0.3
+  noise_std: 5.0
+
+attack:
+  mode: learned
+  pattern: oscillation   # only used for round 0's scripted bootstrap defender
+  intensity: 1.5
+  evasion_budget: 2.0    # attacker's learned action range: [0, 2.0] x base_rate
+
+detection:
+  type: rate_threshold
+  window: 10
+  threshold: 300.0
+  penalty: 1.0
+
+agent:
+  algo: PPO
+  reward_weights:
+    cost_w: 1.0
+    latency_w: 0.01
+    cost_gain_w: 1.0
+    evasion_w: 1.0
+  total_timesteps: 5000   # round-0 bootstrap defender's budget
+  policy_net: [64, 64]
+
+baselines:
+  target_utilization: 0.7
+
+selfplay:
+  rounds: 3
+  round_timesteps: 5000
+  convergence_tolerance: 0.05
+  convergence_patience: 2

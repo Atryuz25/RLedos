@@ -53,3 +53,9 @@ agent:
 
 baselines:
   target_utilization: 0.7   # target_tracking's utilisation setpoint
+
+selfplay:
+  rounds: 3
+  round_timesteps: 5000
+  convergence_tolerance: 0.05
+  convergence_patience: 2

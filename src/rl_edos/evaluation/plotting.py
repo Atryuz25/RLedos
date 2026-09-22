@@ -69,6 +69,37 @@ def plot_attack_trace(
     plt.close(fig)
 
 
+def plot_selfplay_stability(round_metrics: list[dict], out_path: str | Path) -> None:
+    """Cost / latency / detection-trip-rate trend across self-play rounds (Phase 4)."""
+    rounds = [m["round"] for m in round_metrics]
+    costs = [m["mean_cost_under_attack"] for m in round_metrics]
+    latencies = [m["p95_latency_ms"] for m in round_metrics]
+    trips = [m["detection_trip_rate"] for m in round_metrics]
+
+    fig, axes = plt.subplots(1, 3, figsize=(13, 4))
+    axes[0].plot(rounds, costs, color=OKABE_ITO[5], marker="o")
+    axes[0].set_title("Attacker-inflicted cost")
+    axes[0].set_xlabel("round")
+    axes[0].set_ylabel("mean cost / interval")
+
+    axes[1].plot(rounds, latencies, color=OKABE_ITO[0], marker="o")
+    axes[1].set_title("Defender p95 latency")
+    axes[1].set_xlabel("round")
+    axes[1].set_ylabel("p95 latency (ms)")
+
+    axes[2].plot(rounds, trips, color=OKABE_ITO[4], marker="o")
+    axes[2].set_title("Attacker detection-trip rate")
+    axes[2].set_xlabel("round")
+    axes[2].set_ylabel("fraction of intervals")
+
+    for ax in axes:
+        ax.grid(alpha=0.3)
+    fig.suptitle("Self-play stability across rounds")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_curves(reward_history: list[float], out_path: str | Path) -> None:
     """Learning curve; supports the interface ahead of Phase 3's learner."""
     fig, ax = plt.subplots(figsize=(8, 4))

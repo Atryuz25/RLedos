@@ -2,7 +2,7 @@
 
 Persistent project context for Claude Code. Read this fully at the start of **every** session before writing code. It is authoritative; the `docs/*.md` files referenced below hold the detail.
 
-**Current state:** Phases 1 and 2 are **done and audited** (53 tests green; `black` + `ruff` clean). Phase 3 has **not started** — `rl-edos train-defender` is still a CLI stub and `training/` holds only shared SB3 helpers, no `Trainer`. Read the Phase 3 note below before writing any training code.
+**Current state:** Phases 1–4 are **implemented and tested** (74 tests green; `black` + `ruff` clean). `train-defender`, `evaluate`, and `selfplay` are all real, wired CLI commands with working `Trainer` / self-play loop code, `VecNormalize`-based checkpoints, and a NaN/divergence guard. **The Phase 3 MVP acceptance gate itself is not yet met**: two real end-to-end runs on `configs/default.yaml` (10k and 150k PPO timesteps) both show `target_tracking` beating the RL defender on `mean_cost_under_attack` — the RL policies (both `security_blind_rl` and the joint-reward defender) converge to an over-conservative "keep the fleet near `max_instances`" policy that matches `target_tracking`'s latency but at 3-7x the cost. This is a training-budget/reward-tuning problem, not a plumbing bug (the checkpoint round-trip, `VecNormalize` save/load, and action rescaling are all unit- and integration-tested). Next step for anyone picking this up: a much larger `total_timesteps` run (likely 500k-2M+, "overnight" per the spec's own performance target) and/or reward-weight retuning, then re-run `evaluate` and check `comparison.csv` again before declaring the gate passed.
 
 ---
 
@@ -49,9 +49,9 @@ rl-edos/
                   # ← all reward functions live HERE, never scattered in env/
     baselines/    # target_tracking, security_blind_rl, randomisation
                   # ← every baseline emits the SAME action contract as the RL defender
-    training/     # sb3_utils.py: train_ppo + rescale_action — shared by the P2
-                  # security_blind_rl baseline and the P3 Trainer. train_defender
-                  # does NOT exist yet (Phase 3); selfplay loop is P4.
+    training/     # sb3_utils.py: train_ppo/train_ppo_normalized + rescale_action,
+                  # shared by security_blind_rl (P2), train_defender.py::Trainer (P3),
+                  # and selfplay.py + selfplay_envs.py (P4)
     evaluation/   # Evaluator, metrics, plotting, artifacts
     config.py     # pydantic ExperimentConfig (validated on load)
     configs/      # YAML experiment configs (one consolidated file per experiment)
@@ -74,12 +74,15 @@ Packaging: `src/` layout, package `rl_edos`, console entry point `rl-edos` → `
 - `BillingModel.accrue(active_instances, warming_instances, elapsed_s) -> cost_delta` — cost for the interval under configured pricing/granularity; warming instances billed from launch.
 - `DetectionModel.score(traffic_window) -> detection_score` — statistical evasion constraint; validatable in isolation.
 - `Baselines.target_tracking(state) -> action` / `Baselines.randomisation(state) -> action` — same action contract as the RL defender.
-- `Trainer.train(agent_cfg, env) -> policy_ckpt` — thin wrapper over `training/sb3_utils.py::train_ppo` (P3; not built yet).
+- `Trainer.train(config, out_dir) -> policy_ckpt` (`training/train_defender.py`) — thin wrapper over `training/sb3_utils.py::train_ppo_normalized`; `policy_ckpt` is a directory (`policy.zip` + `vecnormalize.pkl`), loaded back via `agents/defender.py::load_defender`.
 - `Evaluator.run(controllers, attack, seeds) -> MetricsSummary` — all controllers under **identical** attack seeds/conditions.
 
 > ### ⚠️ Action-space rescale — read before calling `.predict()`
-> `train_ppo` wraps the env in `gymnasium.wrappers.RescaleAction(env, -1.0, 1.0)` before PPO sees it (SB3 wants a symmetric action space for its Gaussian policy; raw `CloudEnv` actions are `[min_instances, max_instances]`, e.g. `[1, 20]`).
-> **So `model.predict()` returns an action in `[-1, 1]`, not an instance count.** Every caller MUST map it back with `training/sb3_utils.py::rescale_action(action, low, high)`. Existing call sites (`baselines/security_blind_rl.py::SecurityBlindController.__call__`, `cli.py`'s `--policy` path) already do. Skipping it fails *silently*: clipping a `[-1, 1]` value into `[min_instances, max_instances]` looks plausible while pinning the controller near `min_instances`.
+> `train_ppo` / `train_ppo_normalized` wrap the env in `gymnasium.wrappers.RescaleAction(env, -1.0, 1.0)` before PPO sees it (SB3 wants a symmetric action space for its Gaussian policy; raw `CloudEnv` actions are `[min_instances, max_instances]`, e.g. `[1, 20]`; the Phase 4 attacker's are `[0, evasion_budget]`).
+> **So `model.predict()` returns an action in `[-1, 1]`, not a real instance count / intensity.** Every caller MUST map it back with `training/sb3_utils.py::rescale_action(action, low, high)`. Existing call sites (`agents/defender.py`, `agents/attacker.py`, `baselines/security_blind_rl.py`, `training/selfplay_envs.py`, `cli.py`'s `--policy` path) already do. Skipping it fails *silently*: clipping a `[-1, 1]` value into `[min_instances, max_instances]` looks plausible while pinning the controller near `min_instances`.
+
+> ### ⚠️ Observation normalization — read before evaluating a checkpoint
+> `train_ppo_normalized` wraps training in `VecNormalize(norm_obs=True, norm_reward=False)` (`CloudEnv`'s obs space is `Box(low=0, high=inf)` on all 8 dims, which destabilises PPO's value function otherwise). `VecNormalize`'s running obs stats live *outside* the SB3 `.zip`, so every checkpoint is a **directory**: `policy.zip` + `vecnormalize.pkl`. `agents/defender.py::load_defender` / `agents/attacker.py::load_attacker` load both and normalize via `training/sb3_utils.py::normalize_obs` before `.predict()`. Loading only `policy.zip` (or evaluating with a raw obs) silently miscalibrates the policy — it still runs, it's just wrong.
 
 **Defender obs:** vector from `EnvState.to_obs()` — arrival_rate, queue_len, active_instances, warming_instances, latency_ms, accrued-cost rate, detection_score (+ `OBS_DIM = 8` in `env/cloud_env.py`). `security_blind_rl` derives its dimension as `BLIND_OBS_DIM = OBS_DIM - 1` (detection_score is the last field, and it is dropped) — never re-hardcode it.
 **Defender action:** scaling decision (target instance count or delta), same contract as baselines.
@@ -93,27 +96,27 @@ Exact schema fields and units are in `docs/03_DATA_SCHEMAS.md` — treat it as t
 ## CLI surface (the only user entry points)
 
 ```bash
-rl-edos train-defender --config <path>                          # P3 STUB — not implemented yet
+rl-edos train-defender --config <path> [--out <dir>]             # PPO defender vs scripted attack -> checkpoint dir
 rl-edos evaluate --policy <path|none> --baselines <set> --config <path>  # run all controllers, identical attacks
-rl-edos selfplay --config <path>                                # P4 STUB (attack.mode=learned)
-rl-edos plot --run <run_id>                                     # regenerate curves / comparison / attack traces
+rl-edos selfplay --config <path> [--out <dir>]                   # co-evolutionary attacker/defender loop
+rl-edos plot --run <run_id>                                      # regenerate curves / comparison / attack traces
 ```
 
-Artifact layout per run: `results/<run_id>/comparison.csv`, `curves.png`, `attack_trace.png`, `summary.json`, `config.yaml` snapshot. Every `RunRecord` captures `config_hash` + `git_sha` + `seed`.
+Artifact layout per run: `results/<run_id>/comparison.csv`, `curves.png`, `attack_trace.png`, `summary.json`, `config.yaml` snapshot. Every `RunRecord` captures `config_hash` + `git_sha` + `seed`. `train-defender` writes `models/<run_id>/{policy.zip,vecnormalize.pkl,tensorboard_logs/}`; `selfplay` writes `models/selfplay/<run_id>/{defender,attacker}/{policy.zip,vecnormalize.pkl}` + `stability.json` + `stability.png`.
 
 ---
 
-## Phases (build one at a time; full prompts in `docs/`)
+## Phases (full prompts in `docs/`)
 
-| Phase | File | Deliverable | Status / STOP gate |
-|-------|------|-------------|--------------------|
+| Phase | File | Deliverable | Status |
+|-------|------|-------------|--------|
 | 1 | `docs/PHASE_1_ENVIRONMENT_CORE.md` | Scaffold + `CloudEnv` + billing + traffic + detection + config validation + CLI stubs + tests | **DONE, audited** — sim faithful & seeded; fidelity checklist ticked |
 | 2 | `docs/PHASE_2_BASELINES_AND_EVAL.md` | Scripted attacks (steady/oscillation/burst) + baselines + `Evaluator` + metrics + plots | **DONE, audited** — deterministic under fixed seeds |
-| 3 | `docs/PHASE_3_RL_DEFENDER.md` | PPO defender + `Trainer` + joint reward + train + headline comparison | **NOT STARTED.** MVP: defender wins both axes vs both baselines, reproducibly |
-| 4 | `docs/PHASE_4_SELFPLAY_AND_RELEASE.md` | Self-play (stretch) + error handling + docs + reproducibility + release | Converged hardened defender **or** documented failure analysis; DoD met |
+| 3 | `docs/PHASE_3_RL_DEFENDER.md` | PPO defender + `Trainer` + joint reward + train + headline comparison | **CODE DONE, MVP GATE NOT YET MET.** `Trainer`, `VecNormalize` checkpointing, NaN guard, and `evaluate --policy` integration are all implemented and tested (see `tests/test_training.py`). Two real runs on `configs/default.yaml` (10k and 150k timesteps) both show `target_tracking` still beating the RL defender on `mean_cost_under_attack` — the RL policies converge to an over-conservative near-`max_instances` policy. Needs a much larger training budget (and/or reward-weight retuning) before the MVP claim holds; re-run `evaluate` and check `comparison.csv` before declaring it passed. |
+| 4 | `docs/PHASE_4_SELFPLAY_AND_RELEASE.md` | Self-play (stretch) + error handling + docs + reproducibility + release | **CODE DONE.** `run_selfplay` (alternating freeze/train, warm-started per round, `stability.json` + convergence/divergence handling) implemented and tested (`tests/test_selfplay.py`) and smoke-tested end-to-end via `configs/selfplay_demo.yaml`. Depends on Phase 3's defender actually being strong before a self-play result is meaningful research output, not just a working loop. |
 
-> **⚠️ Open blocker for Phase 3 — design for this on day one, do not bolt it on.**
-> `CloudEnv`'s observation space is `Box(low=0, high=inf)` on all 8 dims (arrival rate, queue length, accrued cost…). `gymnasium.utils.env_checker.check_env` flags it, and unbounded observations destabilise PPO's value function — a direct threat to the MVP claim. The fix is `VecNormalize(norm_obs=True, norm_reward=False)` — **never** normalise reward, it would change the joint cost+latency semantics the MVP is measured on. `VecNormalize`'s running stats live *outside* the SB3 `.zip`, so the `Trainer` / `policy_ckpt` format must save and load them alongside the checkpoint (`VecNormalize.save`/`.load`); get it wrong and you silently evaluate a normalised-obs policy on raw obs. Not retrofitted to `security_blind_rl` (Phase 2, no checkpoint-companion mechanism). **Full design note: `docs/PHASE_3_RL_DEFENDER.md`, item 2 (Trainer scope).**
+> ### Resolved: the Phase 3 observation-normalization design note
+> The `Box(low=0, high=inf)` unbounded-observation-space issue flagged before Phase 3 started is handled: `training/sb3_utils.py::train_ppo_normalized` wraps training in `VecNormalize(norm_obs=True, norm_reward=False)`, and `training/train_defender.py::Trainer` saves its running stats (`vecnormalize.pkl`) alongside the SB3 `.zip`. See the "Observation normalization" callout above for the load-time contract.
 
 At each STOP, verify against the matching gate in `docs/10_TESTING_STRATEGY.md` before proceeding.
 
@@ -121,11 +124,11 @@ At each STOP, verify against the matching gate in `docs/10_TESTING_STRATEGY.md` 
 
 ## Definition of done (whole project)
 
-- Runs locally from README: create env, install pinned deps, `train-defender` then `evaluate` on the default config, reproduce the headline comparison.
-- MVP acceptance met (defender wins both axes vs `target_tracking` and `security_blind_rl`).
-- Tests green for env dynamics, billing accrual, detection scoring, attacks, baselines, and reward math — **all covered today (53 passing)**; keep it that way as Phase 3 lands.
+- Runs locally from README: create env, install pinned deps, `train-defender` then `evaluate` on the default config, reproduce the comparison. **Works today** — verified by an actual clean-venv run.
+- MVP acceptance **not yet met**: defender does not currently win both axes vs `target_tracking` and `security_blind_rl` on `configs/default.yaml` at 10k or 150k timesteps (see the Phase 3 row above). The plumbing (training, checkpointing, evaluation integration) is done and tested; the training result itself needs more budget/tuning.
+- Tests green for env dynamics, billing accrual, detection scoring, attacks, baselines, reward math, normalized training, the Trainer round-trip, and the self-play loop — **all covered today (74 passing)**.
 - Threat model, billing assumptions, and sim-to-real gap documented (`docs/ASSUMPTIONS.md`).
-- (Stretch) self-play run with a converged hardened defender **or** a documented stability/failure analysis.
+- Self-play loop runs end-to-end (`configs/selfplay_demo.yaml`) and produces checkpoints + `stability.json` + `stability.png`; whether a given real run converges or reports a documented failure analysis depends on the underlying defender/attacker actually being trained enough to be interesting, per the Phase 3 caveat above.
 
 ---
 
@@ -139,4 +142,4 @@ At each STOP, verify against the matching gate in `docs/10_TESTING_STRATEGY.md` 
 
 ## Session bootstrap
 
-At the start of a session, state which phase we're on, confirm the previous STOP was approved, then implement **only** what that phase's `docs/PHASE_N_*.md` specifies. Phases 1–2 are approved and audited; Phase 3 is next and unstarted. If unsure whether the prior gate passed, ask before writing code.
+At the start of a session, state which phase we're on, confirm the previous STOP was approved, then implement **only** what that phase's `docs/PHASE_N_*.md` specifies. Phases 1–4 are all code-complete; the open item is Phase 3's MVP training result (see above), not new plumbing. If unsure whether the prior gate passed, ask before writing code.

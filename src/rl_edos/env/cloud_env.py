@@ -105,7 +105,18 @@ class CloudEnv(gym.Env):
         )
         return state.to_obs(), {}
 
-    def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
+    def step(
+        self, action: np.ndarray, attack_rate_override: float | None = None
+    ) -> tuple[np.ndarray, float, bool, bool, dict]:
+        """Advance one control interval.
+
+        `attack_rate_override`, requests/second, lets a caller supply a
+        per-step attack rate directly instead of sampling `attack_traffic_fn(t)`
+        -- used by Phase 4's self-play wrapper envs (`training/selfplay_envs.py`),
+        where the attacker's rate depends on a *learned* action evaluated against
+        the current state, not purely on simulation time. Phase 1-3 callers never
+        pass this, so the scripted-attack-by-time behaviour is unchanged.
+        """
         if self._rng is None or self._traffic is None:
             raise RuntimeError("CloudEnv.step called before reset")
 
@@ -115,7 +126,11 @@ class CloudEnv(gym.Env):
         self._promote_warming(t_next)
 
         legit_rate = self._traffic.sample(t_next)
-        attack_rate = self._attack_traffic_fn(t_next)
+        attack_rate = (
+            attack_rate_override
+            if attack_rate_override is not None
+            else self._attack_traffic_fn(t_next)
+        )
         arrival_rate = legit_rate + attack_rate
         self._rate_history.append(arrival_rate)
         if len(self._rate_history) > self.config.detection.window:

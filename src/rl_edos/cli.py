@@ -7,18 +7,22 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
 import yaml
 
+from rl_edos.agents.defender import load_defender
 from rl_edos.baselines import TargetTrackingController, train_security_blind
 from rl_edos.config import AttackSpec, ConfigError, ExperimentConfig, load_config
+from rl_edos.env.attacks import build_attack_fn
 from rl_edos.evaluation.artifacts import write_attack_trace, write_run_artifacts
 from rl_edos.evaluation.evaluator import Controller, Evaluator
 from rl_edos.evaluation.metrics import MetricsSummary, RunRecord
-from rl_edos.evaluation.plotting import plot_comparison, plot_curves
-from rl_edos.training.sb3_utils import rescale_action
+from rl_edos.evaluation.plotting import plot_comparison, plot_curves, plot_selfplay_stability
+from rl_edos.training.sb3_utils import TrainingDivergedError
+from rl_edos.training.selfplay import run_selfplay
+from rl_edos.training.train_defender import Trainer
 
 RESULTS_DIR = Path("results")
+MODELS_DIR = Path("models")
 
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:
@@ -26,8 +30,25 @@ def _add_config_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def _train_defender(args: argparse.Namespace) -> int:
-    load_config(args.config)
-    print("train-defender: not yet implemented in this phase (Phase 3)")
+    config = load_config(args.config)
+    attack_fn = build_attack_fn(config.attack, config.sim, config.traffic.base_rate)
+    out_dir = Path(args.out) if args.out else MODELS_DIR / RunRecord.new_run_id()
+
+    print(
+        f"training defender: {config.agent.total_timesteps} PPO timesteps "
+        f"against a {config.attack.pattern!r} attack (intensity={config.attack.intensity})..."
+    )
+    try:
+        ckpt_dir = Trainer().train(config, out_dir, attack_traffic_fn=attack_fn)
+    except TrainingDivergedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    print(f"wrote checkpoint to {ckpt_dir}")
+    print(
+        f"evaluate with: rl-edos evaluate --config {args.config} "
+        f"--policy {ckpt_dir} --baselines all"
+    )
     return 0
 
 
@@ -55,17 +76,7 @@ def _build_controllers(
             raise ConfigError(f"unknown baseline {name!r}")
 
     if policy and policy != "none":
-        from stable_baselines3 import PPO
-
-        model = PPO.load(policy)
-
-        def _rl_defender(state, _model=model):
-            action, _ = _model.predict(state.to_obs(), deterministic=True)
-            real_action = rescale_action(action, config.sim.min_instances, config.sim.max_instances)
-            clipped = np.clip(real_action, config.sim.min_instances, config.sim.max_instances)
-            return np.asarray(clipped, dtype=np.float32)
-
-        controllers["rl_defender"] = _rl_defender
+        controllers["rl_defender"] = load_defender(policy, config.sim)
 
     return controllers
 
@@ -88,8 +99,23 @@ def _evaluate(args: argparse.Namespace) -> int:
 
 
 def _selfplay(args: argparse.Namespace) -> int:
-    load_config(args.config)
-    print("selfplay: not yet implemented in this phase (Phase 4)")
+    config = load_config(args.config)
+    out_dir = Path(args.out) if args.out else MODELS_DIR / "selfplay" / RunRecord.new_run_id()
+
+    print(
+        f"selfplay: {config.selfplay.rounds} rounds x {config.selfplay.round_timesteps} "
+        f"timesteps/agent, evasion_budget={config.attack.evasion_budget}..."
+    )
+    result = run_selfplay(config, out_dir, seed=config.sim.seed)
+
+    print(f"wrote checkpoints + stability log to {out_dir}")
+    print(
+        f"  rounds_completed={result.rounds_completed} "
+        f"converged={result.converged} diverged={result.diverged}"
+    )
+    if result.failure_reason:
+        print(f"  note: {result.failure_reason}")
+    plot_selfplay_stability(result.round_metrics, out_dir / "stability.png")
     return 0
 
 
@@ -120,6 +146,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_train = sub.add_parser("train-defender", help="train PPO defender vs scripted attacks")
     _add_config_arg(p_train)
+    p_train.add_argument(
+        "--out", default=None, help="checkpoint output dir (default: models/<run_id>)"
+    )
     p_train.set_defaults(func=_train_defender)
 
     p_eval = sub.add_parser("evaluate", help="run all controllers under identical attacks")
@@ -130,6 +159,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_selfplay = sub.add_parser("selfplay", help="co-evolutionary attacker/defender loop")
     _add_config_arg(p_selfplay)
+    p_selfplay.add_argument(
+        "--out",
+        default=None,
+        help="output dir for checkpoints + stability log (default: models/selfplay/<run_id>)",
+    )
     p_selfplay.set_defaults(func=_selfplay)
 
     p_plot = sub.add_parser("plot", help="regenerate curves/comparison/attack-trace plots")

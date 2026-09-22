@@ -1,1 +1,1 @@
-"""train_defender and the self-play loop. Phase 3 / Phase 4."""
+"""train_defender.py (Phase 3) and selfplay.py / selfplay_envs.py (Phase 4)."""

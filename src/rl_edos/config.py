@@ -157,6 +157,30 @@ class AgentConfig(BaseModel):
     )
 
 
+class SelfPlayConfig(BaseModel):
+    """Co-evolutionary self-play loop parameters (Phase 4, stretch)."""
+
+    rounds: int = Field(
+        default=3, gt=0, description="number of attacker/defender freeze-train alternations"
+    )
+    round_timesteps: int = Field(
+        default=5_000, gt=0, description="SB3 PPO training budget per agent, per round"
+    )
+    convergence_tolerance: float = Field(
+        default=0.05,
+        ge=0,
+        description=(
+            "relative change in mean_cost_under_attack between consecutive rounds "
+            "below which the pair is considered stable"
+        ),
+    )
+    convergence_patience: int = Field(
+        default=2,
+        gt=0,
+        description="consecutive stable rounds required before declaring convergence",
+    )
+
+
 class BaselineConfig(BaseModel):
     """Reference-controller parameters (not PPO agents, hence kept out of AgentConfig)."""
 
@@ -177,6 +201,7 @@ class ExperimentConfig(BaseModel):
     detection: DetectionConfig
     agent: AgentConfig = Field(default_factory=AgentConfig)
     baselines: BaselineConfig = Field(default_factory=BaselineConfig)
+    selfplay: SelfPlayConfig = Field(default_factory=SelfPlayConfig)
 
 
 def load_config(path: str | Path) -> ExperimentConfig:

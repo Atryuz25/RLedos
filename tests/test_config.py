@@ -58,3 +58,18 @@ def test_baselines_target_utilization_defaults_and_overrides(make_config):
     assert (
         make_config({"baselines": {"target_utilization": 0.5}}).baselines.target_utilization == 0.5
     )
+
+
+def test_selfplay_defaults_and_overrides(make_config):
+    cfg = make_config()
+    assert cfg.selfplay.rounds == 3
+    assert cfg.selfplay.round_timesteps == 5_000
+
+    overridden = make_config({"selfplay": {"rounds": 1, "round_timesteps": 64}})
+    assert overridden.selfplay.rounds == 1
+    assert overridden.selfplay.round_timesteps == 64
+
+
+def test_selfplay_zero_rounds_fails_fast(make_config):
+    with pytest.raises(Exception):  # pydantic.ValidationError
+        make_config({"selfplay": {"rounds": 0}})

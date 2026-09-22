@@ -36,7 +36,35 @@ rl-edos evaluate --config src/rl_edos/configs/default.yaml --baselines all
 rl-edos plot --run <run_id from the line above>
 ```
 
-`train-defender` (Phase 3) is not yet implemented.
+**Phase 3 implemented**: `Trainer` (`training/train_defender.py`) trains a PPO defender against
+scripted attacks with `VecNormalize`-based observation normalization (`training/sb3_utils.py`)
+and a NaN/divergence guard; checkpoints are a directory (`policy.zip` + `vecnormalize.pkl`) loaded
+back via `agents/defender.py`. Run it:
+
+```bash
+rl-edos train-defender --config src/rl_edos/configs/default.yaml --out models/defender
+rl-edos evaluate --config src/rl_edos/configs/default.yaml --policy models/defender --baselines all
+```
+
+**MVP acceptance gate not yet met.** The spec's success condition is the defender beating both
+`target_tracking` and `security_blind_rl` on cost *and* latency simultaneously. Two real runs
+against the default config (10k and 150k PPO timesteps) both show `target_tracking` still winning
+on `mean_cost_under_attack` — the RL policies converge to an over-conservative near-`max_instances`
+policy rather than an efficient one. This looks like a training-budget/reward-tuning gap, not a
+plumbing bug (the checkpoint/normalization round-trip is unit- and integration-tested). Next step:
+a substantially larger `total_timesteps` run and/or reward-weight retuning.
+
+**Phase 4 implemented**: the co-evolutionary self-play loop (`training/selfplay.py`,
+`training/selfplay_envs.py`) alternates freeze/train between a PPO attacker and defender,
+warm-starting each round, with convergence detection and a graceful non-convergence path
+(`stability.json` + `stability.png` are always written, never a crash). Demo:
+
+```bash
+rl-edos selfplay --config src/rl_edos/configs/selfplay_demo.yaml --out models/selfplay
+```
+
+Self-play is a research loop on top of the Phase 3 defender, so a genuinely meaningful (not just
+mechanically working) self-play result depends on the Phase 3 MVP gap above being closed first.
 
 ## Build documentation set
 
