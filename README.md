@@ -54,17 +54,20 @@ policy rather than an efficient one. This looks like a training-budget/reward-tu
 plumbing bug (the checkpoint/normalization round-trip is unit- and integration-tested). Next step:
 a substantially larger `total_timesteps` run and/or reward-weight retuning.
 
-**Phase 4 implemented**: the co-evolutionary self-play loop (`training/selfplay.py`,
-`training/selfplay_envs.py`) alternates freeze/train between a PPO attacker and defender,
-warm-starting each round, with convergence detection and a graceful non-convergence path
-(`stability.json` + `stability.png` are always written, never a crash). Demo:
+**Phase 4 implemented, not gated** — results not valid until Phase 3 passes: the co-evolutionary
+self-play loop (`training/selfplay.py`, `training/selfplay_envs.py`) alternates freeze/train
+between a PPO attacker and defender, warm-starting each round, with convergence detection and a
+graceful non-convergence path (`stability.json` + `stability.png` are always written, never a
+crash). Demo:
 
 ```bash
 rl-edos selfplay --config src/rl_edos/configs/selfplay_demo.yaml --out models/selfplay
 ```
 
 Self-play is a research loop on top of the Phase 3 defender, so a genuinely meaningful (not just
-mechanically working) self-play result depends on the Phase 3 MVP gap above being closed first.
+mechanically working) self-play result depends on the Phase 3 MVP gap above being closed first —
+this phase was in fact built before that gap was closed (see CLAUDE.md's process note), so treat
+any self-play run to date as a mechanical smoke test, not a research finding.
 
 ## Build documentation set
 
@@ -79,39 +82,40 @@ A simulated cloud testbed in which an attacker agent and a defender agent learn 
 ## Folder layout
 
 ```
-rl-edos-docs/
-  README.md                     # this file
-  00_START_HERE.md              # workflow, phase order, STOP protocol — read first
-  01_PROJECT_SPEC.md            # condensed spec (source of truth)
-  02_ARCHITECTURE.md            # modules, boundaries, Gym interface contract
-  03_DATA_SCHEMAS.md            # every config/state/record schema, typed, with units
-  04_TECH_STACK_AND_SETUP.md    # pinned stack, repo layout, tooling
-  05_BILLING_AND_FIDELITY.md    # real provider economics + citations (non-negotiable)
-  10_TESTING_STRATEGY.md        # per-phase test requirements + acceptance gates
-  11_CLAUDE_CODE_RULES.md       # standing constraints — pin in every session
-  phases/
+rl-edos/                         # this repo's root
+  README.md                      # this file
+  docs/
+    00_START_HERE.md              # workflow, phase order, STOP protocol — read first
+    01_PROJECT_SPEC.md            # condensed spec (source of truth)
+    02_ARCHITECTURE.md            # modules, boundaries, Gym interface contract
+    03_DATA_SCHEMAS.md            # every config/state/record schema, typed, with units
+    04_TECH_STACK_AND_SETUP.md    # pinned stack, repo layout, tooling
+    05_BILLING_AND_FIDELITY.md    # real provider economics + citations (non-negotiable)
+    10_TESTING_STRATEGY.md        # per-phase test requirements + acceptance gates
+    11_CLAUDE_CODE_RULES.md       # standing constraints — pin in every session
     PHASE_1_ENVIRONMENT_CORE.md      # scaffold + simulation core        → STOP
     PHASE_2_BASELINES_AND_EVAL.md    # baselines + attacks + eval harness → STOP
     PHASE_3_RL_DEFENDER.md           # PPO defender (MVP result)          → STOP
     PHASE_4_SELFPLAY_AND_RELEASE.md  # self-play (stretch) + polish       → STOP
+    ASSUMPTIONS.md                   # modelling assumptions, sim-to-real gap
 ```
 
-> The four `phases/PHASE_*.md` files are the same consolidated build prompts referenced in `00_START_HERE.md` (there as `06`–`09`), placed here as individual per-phase files so you can hand Claude Code exactly one phase at a time.
+> The four `docs/PHASE_*.md` files are the same consolidated build prompts referenced in `docs/00_START_HERE.md` (there as `06`–`09`), kept as individual per-phase files so you can hand Claude Code exactly one phase at a time.
 
 ## Reading / build order
 
-1. `00_START_HERE.md` — how the set works and the STOP protocol.
-2. `01`–`05` and `10`–`11` — the shared context Claude Code reads once, up front.
-3. `phases/PHASE_1_ENVIRONMENT_CORE.md` — build, then STOP for review.
-4. `phases/PHASE_2_BASELINES_AND_EVAL.md` — after Phase 1 gate passes.
-5. `phases/PHASE_3_RL_DEFENDER.md` — after Phase 2 gate passes (this is the MVP milestone).
-6. `phases/PHASE_4_SELFPLAY_AND_RELEASE.md` — after Phase 3 gate passes.
+1. `docs/00_START_HERE.md` — how the set works and the STOP protocol.
+2. `docs/01`–`05` and `docs/10`–`11` — the shared context Claude Code reads once, up front.
+3. `docs/PHASE_1_ENVIRONMENT_CORE.md` — build, then STOP for review.
+4. `docs/PHASE_2_BASELINES_AND_EVAL.md` — after Phase 1 gate passes.
+5. `docs/PHASE_3_RL_DEFENDER.md` — after Phase 2 gate passes (this is the MVP milestone).
+6. `docs/PHASE_4_SELFPLAY_AND_RELEASE.md` — after Phase 3 gate passes. **As of this writing, Phase 3's gate has not passed — see CLAUDE.md's process note — so treat Phase 4 as not yet unlocked in practice even though its code exists.**
 
 ## Session bootstrap (paste at the top of each Claude Code session)
 
-> You are building RL-EDoS. Read `11_CLAUDE_CODE_RULES.md`, `01_PROJECT_SPEC.md`, `02_ARCHITECTURE.md`, and `03_DATA_SCHEMAS.md` before writing code. We are on **Phase N**; implement only what `phases/PHASE_N_*.md` specifies, stop at its STOP point, and do not begin the next phase.
+> You are building RL-EDoS. Read `docs/11_CLAUDE_CODE_RULES.md`, `docs/01_PROJECT_SPEC.md`, `docs/02_ARCHITECTURE.md`, and `docs/03_DATA_SCHEMAS.md` before writing code. We are on **Phase N**; implement only what `docs/PHASE_N_*.md` specifies, stop at its STOP point, and do not begin the next phase.
 
-## Non-negotiables (detail in `11_CLAUDE_CODE_RULES.md`)
+## Non-negotiables (detail in `docs/11_CLAUDE_CODE_RULES.md`)
 
 - No `Co-Authored-By: Claude` in commits.
 - Ask before adding any dependency outside the fixed stack.
