@@ -13,6 +13,7 @@ from rl_edos.baselines.target_tracking import TargetTrackingController
 from rl_edos.env.cloud_env import CloudEnv
 from rl_edos.env.state import EnvState
 from rl_edos.evaluation.evaluator import Evaluator
+from rl_edos.training import sb3_utils
 from rl_edos.training.sb3_utils import (
     TrainingDivergedError,
     _NanGuardCallback,
@@ -128,6 +129,26 @@ def test_nan_guard_flags_non_finite_policy_parameters(make_config):
         first_param.fill_(float("nan"))
     assert guard._on_step() is False
     assert guard.diverged is True
+
+
+def test_train_ppo_normalized_warns_loudly_when_tensorboard_missing(make_config, monkeypatch):
+    # tensorboard is a pinned dependency (pyproject.toml), so this only trips in an
+    # environment that skipped it -- must not silently drop tensorboard_log, per
+    # CLAUDE.md Rule 6 ("no silent failures").
+    monkeypatch.setattr(sb3_utils.importlib.util, "find_spec", lambda name: None)
+
+    cfg = make_config({"agent": {"total_timesteps": 16, "policy_net": [8]}})
+    with pytest.warns(RuntimeWarning, match="tensorboard is not installed"):
+        model, vecnorm = train_ppo_normalized(
+            lambda: CloudEnv(cfg),
+            total_timesteps=16,
+            policy_net=[8],
+            seed=1,
+            tensorboard_log="unused/path",
+        )
+    # still trains successfully -- a missing viz dependency degrades, it doesn't fail the run
+    assert model.num_timesteps > 0
+    assert vecnorm.obs_rms.count > 0
 
 
 def test_train_ppo_normalized_raises_and_saves_nothing_on_forced_divergence(

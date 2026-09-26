@@ -88,13 +88,13 @@ def _evaluate(args: argparse.Namespace) -> int:
         raise ConfigError("no controllers to evaluate")
 
     evaluator = Evaluator(config)
-    results = evaluator.run(controllers)
+    results = evaluator.run(controllers, seeds=args.seeds)
 
     run_id = RunRecord.new_run_id()
     out_dir = write_run_artifacts(run_id, config, config.attack, results, RESULTS_DIR)
     print(f"wrote {out_dir}")
-    for name, (metrics, _records) in results.items():
-        print(f"  {name}: {metrics.as_dict()}")
+    for name, (metrics, records) in results.items():
+        print(f"  {name} (n_seeds={len(records)}): {metrics.as_dict()}")
     return 0
 
 
@@ -155,6 +155,14 @@ def build_parser() -> argparse.ArgumentParser:
     _add_config_arg(p_eval)
     p_eval.add_argument("--policy", default="none", help="path to a defender policy, or 'none'")
     p_eval.add_argument("--baselines", default="all", help="comma-separated baseline set")
+    p_eval.add_argument(
+        "--seeds",
+        nargs="+",
+        type=int,
+        default=None,
+        help="one or more episode seeds to average over, e.g. --seeds 0 1 2 "
+        "(default: config's sim.seed only, i.e. current single-seed behaviour)",
+    )
     p_eval.set_defaults(func=_evaluate)
 
     p_selfplay = sub.add_parser("selfplay", help="co-evolutionary attacker/defender loop")

@@ -55,17 +55,44 @@ def test_write_run_artifacts_writes_expected_schema(make_config, tmp_path):
     df = pd.read_csv(out_dir / "comparison.csv")
     expected_cols = {
         "controller",
+        "n_seeds",
         "mean_cost_under_attack",
+        "mean_cost_under_attack_std",
         "p95_latency_ms",
+        "p95_latency_ms_std",
         "legit_drop_rate",
+        "legit_drop_rate_std",
         "overprovision_ratio",
+        "overprovision_ratio_std",
         "reward_curve_ref",
     }
     assert expected_cols.issubset(set(df.columns))
     assert "target_tracking" in df["controller"].values
+    # a single-seed run reports zero spread, not a missing/NaN std
+    row = df[df["controller"] == "target_tracking"].iloc[0]
+    assert row["n_seeds"] == 1
+    assert row["mean_cost_under_attack_std"] == 0.0
 
     summary = json.loads((out_dir / "summary.json").read_text())
     assert summary["run_id"] == run_id
     record = summary["controllers"]["target_tracking"]["run_records"][0]
     assert record["seed"] == 1
     assert "git_sha" in record
+
+
+def test_write_run_artifacts_reports_spread_for_a_multi_seed_run(make_config, tmp_path):
+    cfg = make_config()
+    controllers = {"target_tracking": TargetTrackingController(cfg.sim)}
+    evaluator = Evaluator(cfg)
+    results = evaluator.run(controllers, seeds=[1, 2, 3])
+
+    out_dir = write_run_artifacts(RunRecord.new_run_id(), cfg, cfg.attack, results, tmp_path)
+    df = pd.read_csv(out_dir / "comparison.csv")
+    row = df[df["controller"] == "target_tracking"].iloc[0]
+
+    assert row["n_seeds"] == 3
+    # target_tracking is deterministic given the seed but different seeds still drive
+    # different traffic noise draws, so at least one metric should show real spread
+    # rather than every *_std column silently reading 0.0.
+    std_cols = [c for c in df.columns if c.endswith("_std")]
+    assert any(row[c] != 0.0 for c in std_cols)

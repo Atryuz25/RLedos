@@ -6,6 +6,7 @@ No hand-rolled RL — this only configures SB3's PPO.
 from __future__ import annotations
 
 import importlib.util
+import warnings
 from typing import Callable
 
 import gymnasium as gym
@@ -124,10 +125,18 @@ def train_ppo_normalized(
     """
     torch.use_deterministic_algorithms(True)
     if tensorboard_log is not None and importlib.util.find_spec("tensorboard") is None:
-        # `tensorboard` isn't in the pinned dependency set (pyproject.toml) --
-        # SB3's own logger raises ImportError rather than degrading gracefully
-        # if tensorboard_log is set without it installed. Log nothing rather
-        # than fail training over an optional-viz dependency.
+        # `tensorboard` is pinned in pyproject.toml, so this should only trip in an
+        # environment that skipped it -- SB3's own logger raises ImportError rather
+        # than degrading gracefully if tensorboard_log is set without it installed.
+        # Warn loudly (per CLAUDE.md Rule 6, "no silent failures") and continue
+        # training without logs rather than fail training over a missing viz dep.
+        warnings.warn(
+            "tensorboard is not installed; training will proceed without "
+            "TensorBoard logs (tensorboard_log is being ignored). Install it "
+            "with `pip install -e '.[dev]'` (it's a pinned dependency) to get logs.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         tensorboard_log = None
 
     def _make() -> gym.Env:

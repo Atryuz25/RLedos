@@ -8,6 +8,7 @@ from rl_edos.evaluation.metrics import (
     average_metrics,
     compute_metrics,
     git_sha,
+    std_metrics,
 )
 
 
@@ -57,6 +58,38 @@ def test_average_metrics_is_elementwise_mean():
     assert avg.p95_latency_ms == 20.0
     assert avg.legit_drop_rate == 0.1
     assert avg.overprovision_ratio == 2.0
+
+
+def test_std_metrics_matches_hand_computation():
+    a = MetricsSummary(
+        mean_cost_under_attack=1.0,
+        p95_latency_ms=10.0,
+        legit_drop_rate=0.0,
+        overprovision_ratio=1.0,
+    )
+    b = MetricsSummary(
+        mean_cost_under_attack=3.0,
+        p95_latency_ms=30.0,
+        legit_drop_rate=0.2,
+        overprovision_ratio=3.0,
+    )
+    std = std_metrics([a, b])
+    # population std of [1,3] is 1.0; of [10,30] is 10.0; of [0,3]/[1,3] scaled the same way
+    assert std["mean_cost_under_attack_std"] == 1.0
+    assert std["p95_latency_ms_std"] == 10.0
+    assert std["legit_drop_rate_std"] == 0.1
+    assert std["overprovision_ratio_std"] == 1.0
+
+
+def test_std_metrics_is_zero_for_a_single_seed():
+    a = MetricsSummary(
+        mean_cost_under_attack=1.0,
+        p95_latency_ms=10.0,
+        legit_drop_rate=0.0,
+        overprovision_ratio=1.0,
+    )
+    std = std_metrics([a])
+    assert all(v == 0.0 for v in std.values())
 
 
 def test_git_sha_never_raises_outside_a_repo():

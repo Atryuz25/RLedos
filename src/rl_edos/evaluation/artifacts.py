@@ -14,7 +14,7 @@ import yaml
 from rl_edos.config import AttackSpec, ExperimentConfig
 from rl_edos.env.attacks import build_attack_fn
 from rl_edos.env.traffic import TrafficGenerator
-from rl_edos.evaluation.metrics import MetricsSummary, RunRecord
+from rl_edos.evaluation.metrics import MetricsSummary, RunRecord, std_metrics
 from rl_edos.evaluation.plotting import plot_attack_trace, plot_comparison, plot_curves
 
 
@@ -35,7 +35,13 @@ def write_run_artifacts(
     metrics_by_controller = {name: metrics for name, (metrics, _records) in results.items()}
 
     rows = [
-        {"controller": name, **metrics.as_dict()} for name, metrics in metrics_by_controller.items()
+        {
+            "controller": name,
+            "n_seeds": len(records),
+            **metrics.as_dict(),
+            **std_metrics([r.metrics for r in records]),
+        }
+        for name, (metrics, records) in results.items()
     ]
     pd.DataFrame(rows).to_csv(out_dir / "comparison.csv", index=False)
 

@@ -87,6 +87,28 @@ def average_metrics(summaries: list[MetricsSummary]) -> MetricsSummary:
     )
 
 
+# The numeric MetricsSummary fields std_metrics reports a spread for (excludes
+# reward_curve_ref, which is a path, not a number).
+STD_METRIC_FIELDS = (
+    "mean_cost_under_attack",
+    "p95_latency_ms",
+    "legit_drop_rate",
+    "overprovision_ratio",
+)
+
+
+def std_metrics(summaries: list[MetricsSummary]) -> dict[str, float]:
+    """Per-metric standard deviation across seeds; 0.0 for every field with a single seed.
+
+    Used by `evaluation/artifacts.py` to add `*_std` columns to `comparison.csv`
+    so a multi-seed `evaluate --seeds ...` run reports spread, not just the mean.
+    """
+    return {
+        f"{field}_std": float(np.std([getattr(m, field) for m in summaries]))
+        for field in STD_METRIC_FIELDS
+    }
+
+
 def git_sha() -> str:
     """Current git commit SHA, or 'unknown' outside a git repo / before the first commit."""
     try:
