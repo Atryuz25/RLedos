@@ -101,7 +101,13 @@ def plot_selfplay_stability(round_metrics: list[dict], out_path: str | Path) -> 
 
 
 def plot_curves(reward_history: list[float], out_path: str | Path) -> None:
-    """Learning curve; supports the interface ahead of Phase 3's learner."""
+    """PPO training learning curve: episode reward vs. training step.
+
+    `reward_history` comes from a checkpoint's `train_rewards.csv` (written by
+    `training/train_defender.py::Trainer`); empty for a baseline-only `evaluate`
+    run (no `--policy`, or a policy with no saved training history), in which
+    case a placeholder is rendered instead of an empty axes.
+    """
     fig, ax = plt.subplots(figsize=(8, 4))
     if reward_history:
         ax.plot(reward_history, color=OKABE_ITO[0])
@@ -113,7 +119,8 @@ def plot_curves(reward_history: list[float], out_path: str | Path) -> None:
         ax.text(
             0.5,
             0.5,
-            "No training curve yet\n(populated once a learner exists, Phase 3)",
+            "No training curve for this run\n"
+            "(no --policy checkpoint with saved train_rewards.csv)",
             ha="center",
             va="center",
         )

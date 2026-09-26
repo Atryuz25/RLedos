@@ -9,11 +9,15 @@ from pathlib import Path
 
 import yaml
 
-from rl_edos.agents.defender import load_defender
+from rl_edos.agents.defender import TRAIN_REWARDS_FILENAME, load_defender
 from rl_edos.baselines import TargetTrackingController, train_security_blind
 from rl_edos.config import AttackSpec, ConfigError, ExperimentConfig, load_config
 from rl_edos.env.attacks import build_attack_fn
-from rl_edos.evaluation.artifacts import write_attack_trace, write_run_artifacts
+from rl_edos.evaluation.artifacts import (
+    load_reward_history,
+    write_attack_trace,
+    write_run_artifacts,
+)
 from rl_edos.evaluation.evaluator import Controller, Evaluator
 from rl_edos.evaluation.metrics import MetricsSummary, RunRecord
 from rl_edos.evaluation.plotting import plot_comparison, plot_curves, plot_selfplay_stability
@@ -90,8 +94,14 @@ def _evaluate(args: argparse.Namespace) -> int:
     evaluator = Evaluator(config)
     results = evaluator.run(controllers, seeds=args.seeds)
 
+    reward_history_path = None
+    if args.policy and args.policy != "none":
+        reward_history_path = Path(args.policy) / TRAIN_REWARDS_FILENAME
+
     run_id = RunRecord.new_run_id()
-    out_dir = write_run_artifacts(run_id, config, config.attack, results, RESULTS_DIR)
+    out_dir = write_run_artifacts(
+        run_id, config, config.attack, results, RESULTS_DIR, reward_history_path
+    )
     print(f"wrote {out_dir}")
     for name, (metrics, records) in results.items():
         print(f"  {name} (n_seeds={len(records)}): {metrics.as_dict()}")
@@ -133,7 +143,8 @@ def _plot(args: argparse.Namespace) -> int:
         name: MetricsSummary(**c["metrics"]) for name, c in summary["controllers"].items()
     }
 
-    plot_curves([], run_dir / "curves.png")
+    reward_history = load_reward_history(run_dir / TRAIN_REWARDS_FILENAME)
+    plot_curves(reward_history, run_dir / "curves.png")
     plot_comparison(metrics_by_controller, run_dir / "comparison.png")
     write_attack_trace(config, attack, run_dir / "attack_trace.png")
     print(f"regenerated plots in {run_dir}")

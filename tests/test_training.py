@@ -151,6 +151,28 @@ def test_train_ppo_normalized_warns_loudly_when_tensorboard_missing(make_config,
     assert vecnorm.obs_rms.count > 0
 
 
+def test_train_ppo_normalized_records_reward_history(make_config):
+    # sim_horizon_steps=5 so several episodes complete within a tiny budget,
+    # giving Monitor's info["episode"] multiple chances to fire.
+    cfg = make_config(
+        {"sim": {"sim_horizon_steps": 5}, "agent": {"total_timesteps": 64, "policy_net": [8]}}
+    )
+    history: list[dict] = []
+    train_ppo_normalized(
+        lambda: CloudEnv(cfg),
+        total_timesteps=64,
+        policy_net=[8],
+        seed=1,
+        reward_history_out=history,
+    )
+    assert len(history) >= 2
+    for entry in history:
+        assert set(entry) == {"timestep", "episode_reward", "episode_length"}
+        assert entry["episode_length"] == 5
+    # timesteps are non-decreasing across completed episodes
+    assert [e["timestep"] for e in history] == sorted(e["timestep"] for e in history)
+
+
 def test_train_ppo_normalized_raises_and_saves_nothing_on_forced_divergence(
     make_config, monkeypatch
 ):
@@ -215,3 +237,16 @@ def test_trainer_uses_normalization_meaningfully(make_config, tmp_path):
     controller = load_defender(out_dir, cfg.sim)
     assert controller.vecnorm is not None
     assert controller.vecnorm.obs_rms.count > 1
+
+
+def test_trainer_writes_a_nonempty_reward_history_csv(make_config, tmp_path):
+    cfg = make_config(
+        {"sim": {"sim_horizon_steps": 5}, "agent": {"total_timesteps": 64, "policy_net": [8]}}
+    )
+    out_dir = Trainer().train(cfg, tmp_path / "ckpt", seed=1)
+
+    rewards_path = out_dir / "train_rewards.csv"
+    assert rewards_path.is_file()
+    rows = rewards_path.read_text().strip().splitlines()
+    assert rows[0] == "timestep,episode_reward,episode_length"
+    assert len(rows) > 1  # header plus at least one completed episode

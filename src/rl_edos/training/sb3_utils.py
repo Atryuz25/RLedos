@@ -13,7 +13,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 
@@ -78,6 +79,33 @@ class _NanGuardCallback(BaseCallback):
         return True
 
 
+class _RewardHistoryCallback(BaseCallback):
+    """Appends one entry per completed training episode to `history`.
+
+    Relies on `stable_baselines3.common.monitor.Monitor` wrapping the env
+    (done unconditionally in `train_ppo_normalized`), which adds an
+    `info["episode"] = {"r": total_reward, "l": length, "t": elapsed_s}`
+    entry to `infos` the step an episode ends.
+    """
+
+    def __init__(self, history: list[dict]) -> None:
+        super().__init__()
+        self._history = history
+
+    def _on_step(self) -> bool:
+        for info in self.locals.get("infos", []):
+            episode = info.get("episode")
+            if episode is not None:
+                self._history.append(
+                    {
+                        "timestep": self.num_timesteps,
+                        "episode_reward": float(episode["r"]),
+                        "episode_length": int(episode["l"]),
+                    }
+                )
+        return True
+
+
 def normalize_obs(obs: np.ndarray, vecnorm: VecNormalize | None) -> np.ndarray:
     """Apply a `VecNormalize`'s running obs mean/std to a single raw observation.
 
@@ -99,6 +127,7 @@ def train_ppo_normalized(
     seed: int,
     tensorboard_log: str | None = None,
     warm_start: tuple[PPO, VecNormalize] | None = None,
+    reward_history_out: list[dict] | None = None,
 ) -> tuple[PPO, VecNormalize]:
     """Train PPO with normalized observations: `VecNormalize(norm_obs=True, norm_reward=False)`.
 
@@ -120,6 +149,14 @@ def train_ppo_normalized(
     re-learning from scratch. The new VecNormalize inherits the previous
     round's running obs stats before continuing.
 
+    The env is always wrapped in SB3's `Monitor` so per-episode reward/length are
+    tracked; when `reward_history_out` is given, it is mutated in place with one
+    `{"timestep", "episode_reward", "episode_length"}` entry per completed
+    episode (used by `training/train_defender.py::Trainer` to persist real
+    learning-curve data instead of a placeholder -- see `docs/03_DATA_SCHEMAS.md`'s
+    `reward_curve_ref`). Callers that don't need it (self-play's per-round calls)
+    simply omit it.
+
     Raises `TrainingDivergedError` (and returns nothing to save) if any policy
     parameter goes non-finite during training.
     """
@@ -140,18 +177,22 @@ def train_ppo_normalized(
         tensorboard_log = None
 
     def _make() -> gym.Env:
-        return gym.wrappers.RescaleAction(make_env(), min_action=-1.0, max_action=1.0)
+        return gym.wrappers.RescaleAction(Monitor(make_env()), min_action=-1.0, max_action=1.0)
 
     venv = DummyVecEnv([_make])
     venv = VecNormalize(venv, norm_obs=True, norm_reward=False)
 
     guard = _NanGuardCallback()
+    history_cb = _RewardHistoryCallback(
+        reward_history_out if reward_history_out is not None else []
+    )
+    callback = CallbackList([guard, history_cb])
     if warm_start is not None:
         model, prev_venv = warm_start
         venv.obs_rms = prev_venv.obs_rms
         model.set_random_seed(seed)
         model.set_env(venv)
-        model.learn(total_timesteps=total_timesteps, callback=guard, reset_num_timesteps=False)
+        model.learn(total_timesteps=total_timesteps, callback=callback, reset_num_timesteps=False)
     else:
         model = PPO(
             "MlpPolicy",
@@ -161,7 +202,7 @@ def train_ppo_normalized(
             verbose=0,
             tensorboard_log=tensorboard_log,
         )
-        model.learn(total_timesteps=total_timesteps, callback=guard)
+        model.learn(total_timesteps=total_timesteps, callback=callback)
 
     if guard.diverged:
         raise TrainingDivergedError(

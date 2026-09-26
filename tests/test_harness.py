@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import json
 
 import pandas as pd
@@ -96,3 +97,49 @@ def test_write_run_artifacts_reports_spread_for_a_multi_seed_run(make_config, tm
     # rather than every *_std column silently reading 0.0.
     std_cols = [c for c in df.columns if c.endswith("_std")]
     assert any(row[c] != 0.0 for c in std_cols)
+
+
+def test_write_run_artifacts_plots_real_reward_history_for_rl_defender(make_config, tmp_path):
+    cfg = make_config()
+    # not a real trained checkpoint -- write_run_artifacts only cares that the
+    # file exists and has an episode_reward column, per Trainer's schema.
+    history_path = tmp_path / "train_rewards.csv"
+    with open(history_path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["timestep", "episode_reward", "episode_length"])
+        writer.writeheader()
+        writer.writerows(
+            [
+                {"timestep": 10, "episode_reward": -1.0, "episode_length": 5},
+                {"timestep": 20, "episode_reward": -0.5, "episode_length": 5},
+            ]
+        )
+
+    controllers = {"rl_defender": TargetTrackingController(cfg.sim)}
+    evaluator = Evaluator(cfg)
+    results = evaluator.run(controllers, seeds=[1])
+
+    out_dir = write_run_artifacts(
+        RunRecord.new_run_id(), cfg, cfg.attack, results, tmp_path / "out", history_path
+    )
+
+    assert (out_dir / "train_rewards.csv").is_file()
+    df = pd.read_csv(out_dir / "comparison.csv")
+    ref = df[df["controller"] == "rl_defender"].iloc[0]["reward_curve_ref"]
+    assert ref == str(out_dir / "curves.png")
+
+    summary = json.loads((out_dir / "summary.json").read_text())
+    assert summary["controllers"]["rl_defender"]["metrics"]["reward_curve_ref"] == ref
+
+
+def test_write_run_artifacts_leaves_reward_curve_ref_empty_without_history(make_config, tmp_path):
+    cfg = make_config()
+    controllers = {"rl_defender": TargetTrackingController(cfg.sim)}
+    evaluator = Evaluator(cfg)
+    results = evaluator.run(controllers, seeds=[1])
+
+    out_dir = write_run_artifacts(RunRecord.new_run_id(), cfg, cfg.attack, results, tmp_path)
+
+    assert not (out_dir / "train_rewards.csv").is_file()
+    df = pd.read_csv(out_dir / "comparison.csv")
+    ref = df[df["controller"] == "rl_defender"].iloc[0]["reward_curve_ref"]
+    assert ref == "" or pd.isna(ref)

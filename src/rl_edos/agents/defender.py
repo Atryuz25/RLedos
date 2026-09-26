@@ -25,6 +25,7 @@ from rl_edos.training.sb3_utils import normalize_obs, rescale_action
 
 POLICY_FILENAME = "policy.zip"
 VECNORMALIZE_FILENAME = "vecnormalize.pkl"
+TRAIN_REWARDS_FILENAME = "train_rewards.csv"
 
 
 class RLDefenderController:
