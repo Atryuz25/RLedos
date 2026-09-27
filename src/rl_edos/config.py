@@ -112,6 +112,39 @@ class AttackSpec(BaseModel):
     evasion_budget: float = Field(
         default=0.0, ge=0, description="how hard the attacker may push against detection"
     )
+    attacker_checkpoint: str | None = Field(
+        default=None,
+        description=(
+            "path to a trained self-play attacker checkpoint directory "
+            "(policy.zip + vecnormalize.pkl, per training/selfplay.py); "
+            "required when mode='learned'"
+        ),
+    )
+
+    def validate_learned_attacker(self) -> None:
+        """Fail fast if `mode == "learned"` names no loadable attacker checkpoint.
+
+        Called by `evaluation/evaluator.py::Evaluator.run()`, not by
+        `load_config` -- `selfplay --config <path>` legitimately sets
+        `mode: learned` with no `attacker_checkpoint` yet (self-play *produces*
+        that checkpoint; it doesn't consume one), so this can't be a blanket
+        load-time check without breaking that command.
+        """
+        if self.mode != "learned":
+            return
+        if not self.attacker_checkpoint:
+            raise ConfigError(
+                "attack.mode is 'learned' but attack.attacker_checkpoint is not set; "
+                "point it at a trained self-play attacker checkpoint directory "
+                "(e.g. models/selfplay/<run_id>/attacker)"
+            )
+        policy_path = Path(self.attacker_checkpoint) / "policy.zip"
+        if not policy_path.is_file():
+            raise ConfigError(
+                f"attack.attacker_checkpoint {self.attacker_checkpoint!r} has no "
+                f"{policy_path.name} at {policy_path} -- train one first with "
+                "`rl-edos selfplay`"
+            )
 
 
 class DetectionConfig(BaseModel):

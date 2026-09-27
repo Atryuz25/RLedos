@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from rl_edos.agents.attacker import RLAttackerController
 from rl_edos.config import ConfigError, ExperimentConfig
 from rl_edos.env.attacks import build_attack_fn
 from rl_edos.env.cloud_env import CloudEnv
@@ -78,7 +79,13 @@ def _evaluate_round(
     A separate small loop rather than `evaluation.Evaluator`: the Evaluator
     assumes one controller against a fixed/scripted attack, but self-play
     needs *both* agents acting from the same shared observation each step.
+    The attacker side reuses `agents/attacker.py::RLAttackerController` (the
+    same wrapper `evaluate --config ... ` uses for `attack.mode = "learned"`)
+    rather than re-inlining normalize/predict/rescale/clip here.
     """
+    attacker = RLAttackerController(
+        attacker_model, config.attack.evasion_budget, config.traffic.base_rate, attacker_vecnorm
+    )
     cloud = CloudEnv(config)
     obs, _ = cloud.reset(seed=seed)
     trace = EpisodeTrace()
@@ -94,16 +101,7 @@ def _evaluate_round(
             config.sim.max_instances,
         ).astype(np.float32)
 
-        attacker_obs = normalize_obs(obs, attacker_vecnorm)
-        raw_attacker_action, _ = attacker_model.predict(attacker_obs, deterministic=True)
-        intensity = float(
-            np.clip(
-                rescale_action(raw_attacker_action, 0.0, config.attack.evasion_budget)[0],
-                0.0,
-                config.attack.evasion_budget,
-            )
-        )
-        attack_rate = intensity * config.traffic.base_rate
+        attack_rate = attacker.rate(obs)
 
         obs, _reward, terminated, truncated, info = cloud.step(
             defender_action, attack_rate_override=attack_rate

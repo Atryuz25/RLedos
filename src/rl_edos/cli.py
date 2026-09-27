@@ -126,6 +126,12 @@ def _selfplay(args: argparse.Namespace) -> int:
     if result.failure_reason:
         print(f"  note: {result.failure_reason}")
     plot_selfplay_stability(result.round_metrics, out_dir / "stability.png")
+    print(
+        "evaluate the hardened defender against this trained attacker: set "
+        f"attack.mode: learned and attack.attacker_checkpoint: {result.attacker_ckpt} "
+        f"in your config, then run: rl-edos evaluate --config <that config> "
+        f"--policy {result.defender_ckpt} --baselines all"
+    )
     return 0
 
 
