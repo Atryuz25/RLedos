@@ -43,3 +43,17 @@ Stop. Do **not** start Phase 4 (self-play). Present:
 - confirmation of the divergence/NaN guard behaviour.
 
 Karthik verifies the MVP success milestone (per `../10_TESTING_STRATEGY.md` Phase 3 gate). Only after this passes is self-play unlocked.
+
+---
+
+## Current status (as of 2026-09-27): gate NOT met — documented failure analysis
+
+**Tried:** three real end-to-end runs of `train-defender` + `evaluate` on `configs/default.yaml` against the scripted `oscillation` attack: 10k timesteps, 150k timesteps, and a fresh 10k-timestep smoke run (identical config) re-run during a plumbing-fix pass covering Phases 0–5 of an audit (see `CLAUDE.md`'s process note for that pass's context).
+
+**Result:** all three show the same qualitative pattern. `target_tracking` beats the RL defender on `mean_cost_under_attack` every time; the smoke run's real numbers: `target_tracking` cost `0.003988`, `rl_defender` cost `0.008784`, `security_blind_rl` cost `0.010288` (5-decimal currency units per interval, mean over the episode). `rl_defender`'s `overprovision_ratio` (4.53) is more than double `target_tracking`'s (2.03) — both RL-trained controllers (the joint-reward defender *and* the security-blind baseline) independently converge toward over-provisioning rather than toward `target_tracking`'s leaner policy, which suggests a systematic bias rather than training noise.
+
+**Likely cause (identified, not yet re-tested):** `defender_reward = -(cost_w * cost_delta + latency_w * latency_ms)` combines two terms on very different numeric scales given `default.yaml`'s real values. At baseline (near-empty queue): `cost_w * cost_delta ≈ 1.0 * 0.004 ≈ 0.004`, while `latency_w * latency_ms ≈ 0.01 * 20.0 ≈ 0.2` — the latency term dominates the reward by roughly **50x even before any queueing penalty applies**. The policy gradient has almost no incentive to trade latency for cost savings, because essentially any latency increase (however small) outweighs the cost saved by running fewer instances. This is a config-level reward-weight scaling problem, not a reward-formula or plumbing bug — `agent.reward_weights` is exactly the tunable surface `docs/03_DATA_SCHEMAS.md` and `docs/PHASE_3_RL_DEFENDER.md` intend for this.
+
+**Not yet tried:** retuning `latency_w` down (recommendation: `0.01` → roughly `0.0005`, so the baseline latency contribution lands in the same order of magnitude as cost's) combined with a much larger training budget (500k–2M timesteps, per this phase's own performance target). Both changes are recommended together — a longer run under the current unbalanced reward is not expected to change the qualitative outcome, since the imbalance affects every gradient step, not just early ones.
+
+**Phase 4 status:** remains **implemented, not gated** (see `CLAUDE.md`'s process note) until this gate passes for real and self-play is re-run against a defender that has actually closed this gap.
