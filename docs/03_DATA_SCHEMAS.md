@@ -55,6 +55,7 @@ No relational DB. These are the simulation entities, their state/config schemas,
 | `reward_weights` | dict | `{cost_w, latency_w}` for defender; `+ {cost_gain_w, evasion_w}` for attacker |
 | `total_timesteps` | int | SB3 training budget |
 | `policy_net` | list[int] | hidden-layer sizes |
+| `latency_threshold_ms` | float | milliseconds; defender reward only penalizes latency above this (SLA-style floor); default 0.0 preserves the original always-penalize-any-latency formula |
 
 ## Runtime state
 

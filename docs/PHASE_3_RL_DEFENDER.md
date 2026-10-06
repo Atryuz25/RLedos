@@ -54,6 +54,26 @@ Karthik verifies the MVP success milestone (per `../10_TESTING_STRATEGY.md` Phas
 
 **Likely cause (identified, not yet re-tested):** `defender_reward = -(cost_w * cost_delta + latency_w * latency_ms)` combines two terms on very different numeric scales given `default.yaml`'s real values. At baseline (near-empty queue): `cost_w * cost_delta ≈ 1.0 * 0.004 ≈ 0.004`, while `latency_w * latency_ms ≈ 0.01 * 20.0 ≈ 0.2` — the latency term dominates the reward by roughly **50x even before any queueing penalty applies**. The policy gradient has almost no incentive to trade latency for cost savings, because essentially any latency increase (however small) outweighs the cost saved by running fewer instances. This is a config-level reward-weight scaling problem, not a reward-formula or plumbing bug — `agent.reward_weights` is exactly the tunable surface `docs/03_DATA_SCHEMAS.md` and `docs/PHASE_3_RL_DEFENDER.md` intend for this.
 
-**Not yet tried:** retuning `latency_w` down (recommendation: `0.01` → roughly `0.0005`, so the baseline latency contribution lands in the same order of magnitude as cost's) combined with a much larger training budget (500k–2M timesteps, per this phase's own performance target). Both changes are recommended together — a longer run under the current unbalanced reward is not expected to change the qualitative outcome, since the imbalance affects every gradient step, not just early ones.
+**Not yet tried (as of 2026-09-27):** retuning `latency_w` down (recommendation: `0.01` → roughly `0.0005`, so the baseline latency contribution lands in the same order of magnitude as cost's) combined with a much larger training budget (500k–2M timesteps, per this phase's own performance target). Both changes are recommended together — a longer run under the current unbalanced reward is not expected to change the qualitative outcome, since the imbalance affects every gradient step, not just early ones.
+
+---
+
+## Update (2026-10-06): the retune was tried — non-monotonic, then a reward-formula fix
+
+**Tried:** three real 1,000,000-timestep `train-defender` + `evaluate --seeds 0 1 2 3 4` runs on `configs/default.yaml`, each at a smaller `latency_w` (`cost_w=1.0` fixed, `sim.seed=42` fixed across all three, so these are not random-seed noise):
+
+| `latency_w` | `rl_defender` cost | p95 latency | vs. `target_tracking` (cost `0.003977`) |
+|---|---|---|---|
+| 0.0005 | 0.007526 | 20.0 ms (floor) | +89% |
+| 0.0001 | 0.005010 | 20.0 ms (floor) | **+26% (best found)** |
+| 0.00002 | 0.013641 | 20.0 ms (floor) | +243% (worse than the first attempt) |
+
+**Result:** `0.0001` beat `security_blind_rl` outright on both axes (58% cheaper, latency tied) — that baseline comparison is closed. Against `target_tracking`, `rl_defender` won decisively on latency every time (pinned at the `base_latency_ms` floor throughout, i.e. the queue never built at all) but never beat it on cost, and cutting `latency_w` further **stopped helping and then reversed** at `0.00002`. Since the seed was fixed, this is a real non-monotonic response to the weight, not noise — simple linear down-scaling of `latency_w` was not a reliable lever past a point.
+
+**Revised cause:** a purely linear `-(cost_w * cost_delta + latency_w * latency_ms)` combination means *any* latency above zero costs something. Because the latency formula is steep (`base_latency_ms + queue_len/capacity_rps * 1000` — a small backlog spikes latency by hundreds to thousands of ms, exactly what `security_blind_rl` hit at `6686.7ms` in one run), the *marginal* risk of ever letting the queue build outweighs the cost saved, regardless of how small `latency_w`'s baseline contribution is. This is a structural property of the reward shape, not just a scale problem — which is why shrinking the weight further eventually stopped working and became unstable instead.
+
+**Fix applied:** `agents/reward.py::defender_reward` now takes an optional `latency_threshold_ms` (default `0.0`, which exactly reproduces the original always-penalize formula — fully backward compatible) and only penalizes `max(0, latency_ms - latency_threshold_ms)`. A new `AgentConfig.latency_threshold_ms` field (`docs/03_DATA_SCHEMAS.md`) wires it through `CloudEnv.step()`. This gives the defender an SLA-style band (e.g. latency up to `2x base_latency_ms`) in which it pays nothing for latency at all, directly removing the "always keep the queue perfectly empty" pressure instead of hoping a smaller weight threads the needle. Tested in `tests/test_reward.py` (pure-function threshold math, and a default-matches-original-formula regression) and `tests/test_env_dynamics.py::test_latency_threshold_raises_reward_under_overload` (confirms `CloudEnv` actually reads the new field, per Rule 7).
+
+**Not yet tried:** training with a real `latency_threshold_ms` value (e.g. `40.0`, twice `default.yaml`'s `base_latency_ms`) combined with `latency_w` restored to something less extreme than the values above (e.g. back to `0.01`, since the threshold now absorbs ordinary operation for free and only the genuine-degradation case needs a strong penalty) and the same `1,000,000`-timestep budget.
 
 **Phase 4 status:** remains **implemented, not gated** (see `CLAUDE.md`'s process note) until this gate passes for real and self-play is re-run against a defender that has actually closed this gap.

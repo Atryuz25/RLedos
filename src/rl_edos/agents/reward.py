@@ -8,16 +8,33 @@ from __future__ import annotations
 
 
 def defender_reward(
-    cost_delta: float, latency_ms: float, reward_weights: dict[str, float]
+    cost_delta: float,
+    latency_ms: float,
+    reward_weights: dict[str, float],
+    latency_threshold_ms: float = 0.0,
 ) -> float:
-    """Joint cost+latency defender reward: -(cost_w * cost_delta + latency_w * latency_ms).
+    """Joint cost+latency defender reward:
+    -(cost_w * cost_delta + latency_w * max(0, latency_ms - latency_threshold_ms)).
 
     `cost_delta` is currency for the interval, `latency_ms` is milliseconds.
-    Weights come from AgentConfig.reward_weights.
+    Weights come from AgentConfig.reward_weights; `latency_threshold_ms` comes
+    from AgentConfig.latency_threshold_ms (default 0.0, which reduces to the
+    original always-penalize-any-latency formula -- existing configs are
+    unaffected).
+
+    Without a threshold, *any* latency above zero costs something, however
+    small latency_w is -- which makes "keep the queue perfectly empty" a
+    dominant strategy regardless of weight scale, since under-provisioning
+    even briefly spikes latency by orders of magnitude more than any single
+    step's cost saving (see docs/PHASE_3_RL_DEFENDER.md's "Current status").
+    A positive threshold models a realistic SLA: latency at or below it is
+    free, so the defender can actually trade some queueing for lower cost
+    without being penalized for service that's still perfectly fine.
     """
     cost_w = reward_weights.get("cost_w", 1.0)
     latency_w = reward_weights.get("latency_w", 0.0)
-    return -(cost_w * cost_delta + latency_w * latency_ms)
+    latency_penalty = max(0.0, latency_ms - latency_threshold_ms)
+    return -(cost_w * cost_delta + latency_w * latency_penalty)
 
 
 def attacker_reward(

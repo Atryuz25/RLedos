@@ -38,6 +38,28 @@ def test_missing_weights_default_to_zero():
     assert defender_reward(3.0, 1000.0, {}) == -3.0
 
 
+def test_latency_threshold_zeroes_penalty_below_threshold():
+    # SLA-style floor: latency at or below the threshold costs nothing, no
+    # matter how it's reached -- default threshold is 0.0 (always penalize),
+    # matching every pre-existing call site/test above.
+    weights = {"cost_w": 1.0, "latency_w": 0.01}
+    assert defender_reward(1.0, 20.0, weights, latency_threshold_ms=20.0) == -1.0
+    assert defender_reward(1.0, 5.0, weights, latency_threshold_ms=20.0) == -1.0
+
+
+def test_latency_threshold_penalizes_only_the_excess():
+    # -(1.0*1.0 + 0.01*(50.0 - 20.0)) = -(1.0 + 0.3) = -1.3
+    weights = {"cost_w": 1.0, "latency_w": 0.01}
+    assert defender_reward(1.0, 50.0, weights, latency_threshold_ms=20.0) == -1.3
+
+
+def test_latency_threshold_default_matches_original_always_penalize_formula():
+    weights = {"cost_w": 1.0, "latency_w": 0.01}
+    assert defender_reward(1.0, 50.0, weights) == defender_reward(
+        1.0, 50.0, weights, latency_threshold_ms=0.0
+    )
+
+
 def test_attacker_reward_matches_hand_computation_when_undetected():
     # cost_gain_w * cost_inflicted - evasion_w * 0 (score < 1.0, not tripped) = 1.5 * 2.0 = 3.0
     weights = {"cost_gain_w": 1.5, "evasion_w": 1.0}

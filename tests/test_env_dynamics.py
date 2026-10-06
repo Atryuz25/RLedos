@@ -93,6 +93,37 @@ def test_queue_and_latency_grow_under_sustained_overload(make_config):
     assert latencies[0] < latencies[1] < latencies[2]
 
 
+def test_latency_threshold_raises_reward_under_overload(make_config):
+    # Same forced-overload setup as test_queue_and_latency_grow_under_sustained_overload,
+    # confirming CloudEnv actually reads agent.latency_threshold_ms (not just that
+    # defender_reward's pure function respects it in isolation -- Rule 7).
+    overrides = {
+        "sim": {
+            "min_instances": 1,
+            "max_instances": 1,
+            "capacity_rps_per_instance": 5.0,
+            "control_interval_s": 10.0,
+        },
+        "traffic": {"legit_pattern": "poisson", "base_rate": 20.0, "noise_std": 0.0},
+        "agent": {"reward_weights": {"cost_w": 1.0, "latency_w": 0.01}},
+    }
+    env_no_threshold = CloudEnv(make_config(overrides))
+    env_no_threshold.reset(seed=1)
+    _, reward_no_threshold, *_ = env_no_threshold.step(np.array([1.0], dtype=np.float32))
+
+    overrides_with_threshold = {
+        **overrides,
+        "agent": {**overrides["agent"], "latency_threshold_ms": 10_000.0},
+    }
+    env_with_threshold = CloudEnv(make_config(overrides_with_threshold))
+    env_with_threshold.reset(seed=1)
+    _, reward_with_threshold, *_ = env_with_threshold.step(np.array([1.0], dtype=np.float32))
+
+    # a high enough threshold absorbs this step's (smaller) latency spike entirely,
+    # leaving only the cost term -- reward must be strictly higher (less negative)
+    assert reward_with_threshold > reward_no_threshold
+
+
 def test_reset_seed_reproduces_identical_episode(make_config):
     cfg = make_config()
     actions = [np.array([3.0], dtype=np.float32) for _ in range(5)]

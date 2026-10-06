@@ -160,7 +160,12 @@ class CloudEnv(gym.Env):
             accrued_cost=self._accrued_cost,
             detection_score=detection_score,
         )
-        reward = defender_reward(cost_delta, latency_ms, self.config.agent.reward_weights)
+        reward = defender_reward(
+            cost_delta,
+            latency_ms,
+            self.config.agent.reward_weights,
+            self.config.agent.latency_threshold_ms,
+        )
         terminated = False
         truncated = self._step_count >= self.sim.sim_horizon_steps
         info = {

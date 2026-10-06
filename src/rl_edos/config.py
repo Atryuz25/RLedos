@@ -173,6 +173,15 @@ class AgentConfig(BaseModel):
         description="{cost_w, latency_w} for defender; + {cost_gain_w, evasion_w} for attacker",
     )
     total_timesteps: int = Field(default=10_000, gt=0, description="SB3 training budget")
+    latency_threshold_ms: float = Field(
+        default=0.0,
+        ge=0,
+        description=(
+            "SLA-style floor, milliseconds: defender reward only penalizes latency "
+            "above this (default 0.0 preserves the original always-penalize-any-"
+            "latency behaviour). See agents/reward.py::defender_reward."
+        ),
+    )
 
     @field_validator("reward_weights")
     @classmethod
